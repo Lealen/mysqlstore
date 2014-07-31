@@ -253,19 +253,47 @@ func (m *MySQLStore) save(session *sessions.Session) error {
 	return nil
 }
 
+func charsToString(ca []uint8) string {
+	s := make([]byte, len(ca))
+	var lens int
+	for ; lens < len(ca); lens++ {
+		if ca[lens] == 0 {
+			break
+		}
+		s[lens] = uint8(ca[lens])
+	}
+	return string(s[0:lens])
+}
+
 func (m *MySQLStore) load(session *sessions.Session) error {
 	row := m.stmtSelect.QueryRow(session.ID)
 	sess := sessionRow{}
-	scanErr := row.Scan(&sess.id, &sess.data, &sess.createdOn, &sess.modifiedOn, &sess.expiresOn)
-	if scanErr != nil {
-		return scanErr
+	var (
+		createdOn,
+		modifiedOn,
+		expiresOn []uint8
+	)
+	var err error
+
+	if err = row.Scan(&sess.id, &sess.data, &createdOn, &modifiedOn, &expiresOn); err != nil {
+		return err
 	}
+	if sess.createdOn, err = time.Parse("2006-01-02 15:04:05", charsToString(createdOn)); err != nil {
+		return err
+	}
+	if sess.modifiedOn, err = time.Parse("2006-01-02 15:04:05", charsToString(modifiedOn)); err != nil {
+		return err
+	}
+	if sess.expiresOn, err = time.Parse("2006-01-02 15:04:05", charsToString(expiresOn)); err != nil {
+		return err
+	}
+
 	if sess.expiresOn.Sub(time.Now()) < 0 {
 		log.Printf("Session expired on %s, but it is %s now.", sess.expiresOn, time.Now())
 		return errors.New("Session expired")
 	}
-	err := securecookie.DecodeMulti(session.Name(), sess.data, &session.Values, m.Codecs...)
-	if err != nil {
+
+	if err = securecookie.DecodeMulti(session.Name(), sess.data, &session.Values, m.Codecs...); err != nil {
 		return err
 	}
 	session.Values["created_on"] = sess.createdOn
